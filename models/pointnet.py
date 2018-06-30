@@ -140,15 +140,16 @@ class PointNetClassify(nn.Module):
         correct = 0.
         total = 0
 
-        for batch_idx, (inputs, targets) in enumerate(dataloader):
-            if self.use_cuda:
-                inputs = inputs.cuda(self.device_id)
-                targets = targets.cuda(self.device_id)
+        with torch.no_grad():
+            for batch_idx, (inputs, targets) in enumerate(dataloader):
+                if self.use_cuda:
+                    inputs = inputs.cuda(self.device_id)
+                    targets = targets.cuda(self.device_id)
 
-            outputs = self(inputs)
-            _, predicted = torch.max(outputs.data, 1)
-            total += targets.size(0)
-            correct += (predicted == targets).sum().item()
+                outputs = self(inputs)
+                _, predicted = torch.max(outputs.data, 1)
+                total += targets.size(0)
+                correct += (predicted == targets).sum().item()
 
         print('Accuracy of the network on the test images: %d %%' % (100 * correct / total))
 
