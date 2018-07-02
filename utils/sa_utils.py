@@ -9,24 +9,45 @@ extension_ = load(name='extension_',
                   verbose=False)
 
 
+class BallQuery(Function):
+    """
+
+
+    :param pc: (B, C, N)
+           new_pc: (B, C, M)
+           radius: R
+           group_point_nums: K
+    :return: group_idxs: (B, M, K)
+    """
+
+    @staticmethod
+    def forward(ctx, pc, new_pc, radius, group_point_nums):
+        xyz = pc.transpose(1, 2).contiguous()
+        new_xyz = new_pc.transpose(1, 2).contiguous()
+        group_idxs = extension_.ball_query_wraper(xyz, new_xyz, radius, group_point_nums)
+
+        return group_idxs
+
+    @staticmethod
+    def backward(ctx, grad_out=None):
+        return None, None, None, None
+
+
+ball_query = BallQuery.apply
+
+
 class GroupPoints(Function):
     """
     simpling points
 
-    :param features: (B, C', N)
-           xyz: (B, C, N)
-           new_xyz: (B, C, M)
-           radius: R
-           group_point_nums: K
-    :return: out: (B, C, M)
+    :param features: (B, C, N)
+           group_idxs: (B, M, K)
+    :return: out: (B, C, M, K)
     """
-    @staticmethod
-    def forward(ctx, features, pc, new_pc, radius, group_point_nums):
-        xyz = pc.transpose(1, 2).contiguous()
-        new_xyz = new_pc.transpose(1, 2).contiguous()
-        group_idxs = extension_.ball_query_wraper(xyz, new_xyz, radius, group_point_nums)
-        out = extension_.group_points_wrapper(features, group_idxs)
 
+    @staticmethod
+    def forward(ctx, features, group_idxs):
+        out = extension_.group_points_wrapper(features, group_idxs)
         ctx.save_for_backward(features, group_idxs)
         return out
 

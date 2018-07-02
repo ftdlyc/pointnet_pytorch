@@ -10,21 +10,25 @@ import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 from T_Net import TNet
-from utils.sa_utils import farthest_point_sampling, group_points
+from utils.sa_utils import farthest_point_sampling, group_points, ball_query
 
 
 class PointNetPlusSAModule(nn.Module):
 
-    def __init__(self, in_channels, mlp_specs, sample_point_nums, radius, group_point_nums):
+    def __init__(self, in_channels, mlp_specs, sample_point_nums, radius, group_point_nums, use_xyz=True):
         super(PointNetPlusSAModule, self).__init__()
         assert (type(mlp_specs) == type(group_point_nums) == type(radius) == list)
         assert (len(mlp_specs) == len(radius) == len(group_point_nums))
         assert (type(mlp_specs[0]) == list)
 
-        self.in_channels = in_channels
+        if use_xyz:
+            self.in_channels = in_channels + 3
+        else:
+            self.in_channels = in_channels
         self.sample_point_nums = sample_point_nums
         self.group_point_nums = group_point_nums
         self.radius = radius
+        self.use_xyz = use_xyz
         self.mlps = nn.ModuleList()
 
         for i in range(0, len(radius)):
@@ -42,8 +46,18 @@ class PointNetPlusSAModule(nn.Module):
         new_feature_lists = []
 
         for i in range(0, len(self.radius)):
-            new_features = group_points(features, pc.detach(), new_pc.detach(),
-                                        self.radius[i], self.group_point_nums[i])
+            group_idxs = ball_query(pc, new_pc, self.radius[i], self.group_point_nums[i])
+            if features is None:
+                xyz_features = group_points(pc, group_idxs.detach())
+                new_features = xyz_features - new_pc.unsqueeze(-1)
+            else:
+                group_features = group_points(features, group_idxs.detach())
+                if self.use_xyz:
+                    xyz_features = group_points(pc, group_idxs.detach())
+                    xyz_features -= new_pc.unsqueeze(-1)
+                    new_features = torch.cat([xyz_features, group_features], dim=1)
+                else:
+                    new_features = group_features
             new_features = self.mlps[i](new_features)
             new_features = F.max_pool2d(new_features, (1, new_features.size(3)), stride=1)
             new_features = new_features.squeeze(-1)
@@ -59,10 +73,10 @@ class PointNetPlusClassify(nn.Module):
 
         self.device_id = device_id
 
-        self.sa_layer1 = PointNetPlusSAModule(3, [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
-                                              512, [0.1, 0.2, 0.4], [32, 64, 128])
+        self.sa_layer1 = PointNetPlusSAModule(0, [[32, 32, 64], [64, 64, 128], [64, 96, 128]],
+                                              512, [0.1, 0.2, 0.4], [32, 64, 128], True)
         self.sa_layer2 = PointNetPlusSAModule(64 + 128 + 128, [[64, 64, 128], [128, 128, 256], [128, 128, 256]],
-                                              128, [0.2, 0.4, 0.8], [16, 32, 64])
+                                              128, [0.2, 0.4, 0.8], [16, 32, 64], True)
         self.mlp_global = nn.Sequential(
             nn.Conv1d(128 + 256 + 256, 256, 1),
             nn.BatchNorm1d(256),
@@ -96,7 +110,7 @@ class PointNetPlusClassify(nn.Module):
         self.cuda()
 
     def forward(self, pc):
-        pc, feature = self.sa_layer1(pc, pc)
+        pc, feature = self.sa_layer1(pc, None)
         pc, feature = self.sa_layer2(pc, feature)
         feature = self.mlp_global(feature)
         feature = F.max_pool1d(feature, feature.size(2), stride=1).squeeze(-1)
