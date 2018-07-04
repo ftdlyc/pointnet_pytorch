@@ -1,4 +1,5 @@
 import os, sys
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(BASE_DIR)
 sys.path.append(os.path.join(BASE_DIR, "../utils"))
@@ -13,15 +14,14 @@ from T_Net import TNet
 
 class PointNetClassify(nn.Module):
 
-    def __init__(self, point_nums, class_nums, use_cuda=None, device_id=0, initial_weights=True):
+    def __init__(self, class_nums, use_cuda=None, device_id=0, initial_weights=True):
         super(PointNetClassify, self).__init__()
 
-        self.point_nums = point_nums
         self.class_nums = class_nums
         self.use_cuda = use_cuda
         self.device_id = device_id
 
-        self.trans1 = TNet(point_nums, 3)
+        self.trans1 = TNet(3)
         self.mlp1 = nn.Sequential(
             nn.Conv1d(3, 64, 1),
             nn.BatchNorm1d(64),
@@ -30,7 +30,7 @@ class PointNetClassify(nn.Module):
             nn.BatchNorm1d(64),
             nn.ReLU(True)
         )
-        self.trans2 = TNet(point_nums, 64)
+        self.trans2 = TNet(64)
         self.mlp2 = nn.Sequential(
             nn.Conv1d(64, 64, 1),
             nn.BatchNorm1d(64),
@@ -42,7 +42,6 @@ class PointNetClassify(nn.Module):
             nn.BatchNorm1d(1024),
             nn.ReLU(True)
         )
-        self.max_pool = nn.MaxPool1d(point_nums, stride=1)
         self.mlp3 = nn.Sequential(
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
@@ -59,7 +58,7 @@ class PointNetClassify(nn.Module):
 
         self.criterion = nn.CrossEntropyLoss()
         self.t_reg_weight = 0.001
-        self.optimizer = optim.Adam(self.parameters() )
+        self.optimizer = optim.Adam(self.parameters())
         self.schedule = optim.lr_scheduler.StepLR(self.optimizer, 20, 0.5)
 
         if use_cuda:
@@ -70,7 +69,7 @@ class PointNetClassify(nn.Module):
         x = self.mlp1(x)
         x = self.trans2(x)
         x = self.mlp2(x)
-        x = self.max_pool(x)
+        x = F.max_pool1d(x, x.size(2), stride=1)
         x = x.view(x.size(0), -1)
         x = self.mlp3(x)
 
@@ -78,7 +77,7 @@ class PointNetClassify(nn.Module):
 
     def initialize_weights(self):
         for name, module in self.named_children():
-            if name not in ['trans1', 'trans2', 'max_pool']:
+            if name not in ['trans1', 'trans2']:
                 for m in module:
                     if isinstance(m, nn.Conv1d):
                         m.weight.data.normal_(0, 0.01)
@@ -155,17 +154,18 @@ class PointNetClassify(nn.Module):
 
         return correct / total
 
+
 class PointNetSegment(nn.Module):
 
-    def __init__(self, point_nums, class_nums, cuda=None, device_id=None, initial_weights=True):
+    def __init__(self, class_nums, category_nums, use_cuda=None, device_id=None, initial_weights=True):
         super(PointNetSegment, self).__init__()
 
-        self.point_nums = point_nums
         self.class_nums = class_nums
-        self.cuda = cuda
+        self.category_nums = category_nums
+        self.use_cuda = use_cuda
         self.device_id = device_id
 
-        self.trans1 = TNet(point_nums, 3)
+        self.trans1 = TNet(3)
         self.mlp1 = nn.Sequential(
             nn.Conv1d(3, 64, 1),
             nn.BatchNorm1d(64),
@@ -174,7 +174,7 @@ class PointNetSegment(nn.Module):
             nn.BatchNorm1d(64),
             nn.ReLU(True)
         )
-        self.trans2 = TNet(point_nums, 64)
+        self.trans2 = TNet(64)
         self.mlp2 = nn.Sequential(
             nn.Conv1d(64, 64, 1),
             nn.BatchNorm1d(64),
@@ -186,9 +186,8 @@ class PointNetSegment(nn.Module):
             nn.BatchNorm1d(1024),
             nn.ReLU(True)
         )
-        self.max_pool = nn.MaxPool1d(point_nums, stride=1)
         self.mlp3 = nn.Sequential(
-            nn.Conv1d(1088, 512, 1),
+            nn.Conv1d(1088 + category_nums, 512, 1),
             nn.BatchNorm1d(512),
             nn.ReLU(True),
             nn.Conv1d(512, 256, 1),
@@ -203,23 +202,36 @@ class PointNetSegment(nn.Module):
         if initial_weights:
             self.initialize_weights()
 
-    def forward(self, x):
+        self.criterion = nn.CrossEntropyLoss()
+        self.t_reg_weight = 0.001
+        self.optimizer = optim.Adam(self.parameters())
+        self.schedule = optim.lr_scheduler.StepLR(self.optimizer, 20, 0.5)
+
+        if use_cuda:
+            self.cuda(device_id)
+
+    def forward(self, x, labels):
         x = self.trans1(x)
         x = self.mlp1(x)
         x = self.trans2(x)
         local_feature = x
         x = self.mlp2(x)
-        x = self.max_pool(x)
+        x = F.max_pool1d(x, x.size(2), stride=1)
         x = x.view(x.size(0), -1)
-        gobal_feature = x.unsqueeze(2).repeat([1, 1, self.point_nums])
-        x = torch.cat([local_feature, gobal_feature], 1)
+        gobal_feature = x.unsqueeze(2).repeat([1, 1, local_feature.size(2)])
+        index = labels.unsqueeze(1).repeat([1, local_feature.size(2)]).unsqueeze(1)
+        one_hot = torch.zeros([local_feature.size(0), self.category_nums, local_feature.size(2)])
+        if self.use_cuda:
+            one_hot = one_hot.cuda(self.device_id)
+        one_hot = one_hot.scatter_(1, index, 1)
+        x = torch.cat([local_feature, gobal_feature, one_hot], 1)
         x = self.mlp3(x)
 
         return x
 
     def initialize_weights(self):
         for name, module in self.named_children():
-            if name not in ['trans1', 'trans2', 'max_pool']:
+            if name not in ['trans1', 'trans2']:
                 for m in module:
                     if isinstance(m, nn.Conv1d):
                         m.weight.data.normal_(0, 0.01)
@@ -231,3 +243,69 @@ class PointNetSegment(nn.Module):
                     elif isinstance(m, nn.BatchNorm1d):
                         m.weight.data.fill_(1)
                         m.bias.data.zero_()
+
+    def loss(self, outputs, targets):
+        t = self.trans2.trans
+        eye = torch.eye(64)
+        if self.use_cuda:
+            eye = eye.cuda(self.device_id)
+        t_reg = torch.pow(
+            torch.norm(
+                eye.sub(torch.matmul(t, t.transpose(1, 2)))
+            ), 2)
+        return self.criterion(outputs, targets) + self.t_reg_weight * t_reg
+
+    def fit(self, dataloader, epoch):
+        self.train()
+        batch_loss = 0.
+        epoch_loss = 0.
+        batch_nums = 0
+        if self.schedule is not None:
+            self.schedule.step()
+
+        print('----------epoch %d start train----------' % epoch)
+
+        for batch_idx, (inputs, targets, labels) in enumerate(dataloader):
+            if self.use_cuda:
+                inputs = inputs.cuda(self.device_id)
+                targets = targets.cuda(self.device_id)
+                labels = labels.cuda(self.device_id)
+            self.optimizer.zero_grad()
+
+            outputs = self(inputs, labels)
+            losses = self.loss(outputs, targets)
+            losses.backward()
+            self.optimizer.step()
+
+            batch_loss += losses.item()
+            epoch_loss += losses.item()
+            batch_nums += 1
+            if (batch_idx + 1) % 4 == 0:
+                print('[%d, %5d] loss %.3f' % (epoch, batch_idx, batch_loss / 4))
+                batch_loss = 0.
+
+        print('-----------epoch %d end train-----------' % epoch)
+        print('epoch %d loss %.3f' % (epoch, epoch_loss / batch_nums))
+
+        return epoch_loss / batch_nums
+
+    def score(self, dataloader):
+        self.eval()
+        correct = 0.
+        total = 0
+
+        with torch.no_grad():
+            for batch_idx, (inputs, targets, labels) in enumerate(dataloader):
+                if self.use_cuda:
+                    inputs = inputs.cuda(self.device_id)
+                    targets = targets.cuda(self.device_id)
+                    labels = labels.cuda(self.device_id)
+
+                outputs = self(inputs, labels)
+                _, predicted = torch.max(outputs.data, 1)
+                total += targets.size(0) * targets.size(1)
+                correct += (predicted == targets).sum().item()
+
+        print('Accuracy of the network on the test images: %d %%' % (100 * correct / total))
+
+        return correct / total

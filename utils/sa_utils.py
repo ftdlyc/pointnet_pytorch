@@ -4,7 +4,7 @@ from torch.autograd import Function
 from torch.utils.cpp_extension import load
 
 extension_ = load(name='extension_',
-                  sources=['utils/wrap.cpp', 'utils/sampling.cu', 'utils/group_points.cu'],
+                  sources=['utils/wrap.cpp', 'utils/sampling.cu', 'utils/group_points.cu', 'utils/interpolate.cu'],
                   extra_include_paths=['/usr/local/cuda/include', os.path.join(os.getcwd(), 'utils', 'include')],
                   verbose=False)
 
@@ -24,7 +24,7 @@ class BallQuery(Function):
     def forward(ctx, pc, new_pc, radius, group_point_nums):
         xyz = pc.transpose(1, 2).contiguous()
         new_xyz = new_pc.transpose(1, 2).contiguous()
-        group_idxs = extension_.ball_query_wraper(xyz, new_xyz, radius, group_point_nums)
+        group_idxs = extension_.ball_query_wrapper(xyz, new_xyz, radius, group_point_nums)
 
         return group_idxs
 
@@ -75,7 +75,7 @@ class FarthestPointSampling(Function):
     @staticmethod
     def forward(ctx, pc, sample_point_nums):
         xyz = pc.transpose(1, 2).contiguous()
-        idxs = extension_.farthest_point_sampling_wraper(xyz, sample_point_nums)
+        idxs = extension_.farthest_point_sampling_wrapper(xyz, sample_point_nums)
         out = extension_.gather_points_wrapper(pc, idxs)
 
         ctx.save_for_backward(idxs, pc)
@@ -84,10 +84,42 @@ class FarthestPointSampling(Function):
     @staticmethod
     def backward(ctx, grad_outputs):
         idxs, pc = ctx.saved_tensors
-        print(grad_outputs.size())
-        grad_inputs = extension_.gather_points_grad_wrapper(grad_outputs.data.contiguous(), idxs, xyz.size(2))
+        grad_inputs = extension_.gather_points_grad_wrapper(grad_outputs.data.contiguous(), idxs, pc.size(2))
 
         return grad_inputs, None
 
 
 farthest_point_sampling = FarthestPointSampling.apply
+
+
+class Interpolate(Function):
+    """
+    interploate points
+
+    :param features: (B, C, M)
+           unknown_pc: (B, 3, N)
+           known_pc: (B, 3, M)
+           nn_points: K
+    :return: out: (B, C, N)
+    """
+
+    @staticmethod
+    def forward(ctx, features, unknown_pc, known_pc, nn_points):
+        unknown = unknown_pc.transpose(1, 2).contiguous()
+        known = known_pc.transpose(1, 2).contiguous()
+        idxs, dists = extension_.knn_wrapper(unknown, known, nn_points)
+        dists_recip = 1.0 / (dists + 1e-8)
+        norm = torch.sum(dists_recip, dim=2, keepdim=True)
+        weights = dists_recip / norm
+        out = extension_.interpolate_wrapper(features, idxs, weights)
+        ctx.save_for_backward(known, idxs, weights)
+        return out
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        known, idxs, weights = ctx.saved_tensors
+        grad_inputs = extension_.interpolate_grad_wrapper(grad_out.contiguous(), idxs, weights, known.size(1))
+        return grad_inputs, None, None, None
+
+
+interpolate = Interpolate.apply
