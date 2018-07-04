@@ -106,8 +106,8 @@ __global__ void ball_query_kernel(int b, int n, int m, float radius2,
 }
 
 // input: xyz(b, n, 3), new_xyz(b, m, 3)
-// output: idx(b, m, k)
-void ball_query_kernel_wraper(int b, int n, int m, float radius, int k,
+// output: group_idxs(b, m, k)
+void ball_query_kernel_wrapper(int b, int n, int m, float radius, int k,
                               const float *xyz, const float *new_xyz,
                               int *group_idxs) {
   cudaError_t err;

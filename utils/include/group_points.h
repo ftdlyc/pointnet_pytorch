@@ -9,7 +9,7 @@ void group_points_grad_kernel_wrapper(int b, int c, int n, int m, int k,
                                       const float *grad_out, const int *group_idxs,
                                       float *grad_points);
 
-void ball_query_kernel_wraper(int b, int n, int m, float radius, int k,
+void ball_query_kernel_wrapper(int b, int n, int m, float radius, int k,
                               const float *xyz, const float *new_xyz,
                               int *group_idxs);
 

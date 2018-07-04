@@ -184,7 +184,7 @@ __global__ void furthest_point_sampling_kernel(
   }
 }
 
-void farthest_point_sampling_kernel_wraper(int b, int n, int m,
+void farthest_point_sampling_kernel_wrapper(int b, int n, int m,
                                            const float *points, float *temp,
                                            int *idxs) {
   cudaError_t err;

@@ -6,10 +6,9 @@ import numpy as np
 
 class TNet(nn.Module):
 
-    def __init__(self, point_nums, K, initial_weights=True):
+    def __init__(self, K, initial_weights=True):
         super(TNet, self).__init__()
 
-        self.point_nums = point_nums
         self.K = K
         self.mlp1 = nn.Sequential(
             nn.Conv1d(K, 64, 1),
@@ -22,7 +21,6 @@ class TNet(nn.Module):
             nn.BatchNorm1d(1024),
             nn.ReLU(True)
         )
-        self.max_pool = nn.MaxPool1d(point_nums, stride=1)
         self.mlp2 = nn.Sequential(
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
@@ -37,7 +35,7 @@ class TNet(nn.Module):
 
     def forward(self, x):
         t = self.mlp1(x)
-        t = self.max_pool(t)
+        t = F.max_pool1d(t, t.size(2), stride=1)
         t = t.view(t.size(0), -1)
         t = self.mlp2(t)
         t = t.view(x.size(0), self.K, self.K)
