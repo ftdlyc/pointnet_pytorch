@@ -217,8 +217,7 @@ class PointNetSegment(nn.Module):
         local_feature = x
         x = self.mlp2(x)
         x = F.max_pool1d(x, x.size(2), stride=1)
-        x = x.view(x.size(0), -1)
-        gobal_feature = x.unsqueeze(2).repeat([1, 1, local_feature.size(2)])
+        gobal_feature = x.repeat([1, 1, local_feature.size(2)])
         index = labels.unsqueeze(1).repeat([1, local_feature.size(2)]).unsqueeze(1)
         one_hot = torch.zeros([local_feature.size(0), self.category_nums, local_feature.size(2)])
         if self.use_cuda:
